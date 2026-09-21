@@ -18,13 +18,9 @@ distinto, y sin este archivo no se distinguen.
 
 ---
 
-<!--
-PENDIENTE: los prompts con los que montaste el harness (CLAUDE.md con /init, MCP de Atlassian,
-skills /priority-ticket y /commit, subagente adversarial-reviewer, hook de Prettier, reglas de
-proceso, AGENTS.md) no están en esta sesión ni en la memoria de Claude Code: la única
-transcripción local de este proyecto empieza en el Prompt 1 de abajo. Si los lanzaste en otra
-herramienta u otra máquina, pégalos antes del Prompt 1 y renumera. Borra este comentario después.
--->
+> Montaje del harness: no hay prompts propios. Las ocho piezas se copiaron del paquete ya
+> preparado de `~/harness/` (ver `INSTALAR.md`), y ninguna transcripción local registra con qué
+> prompts se generó ese paquete. Los prompts de abajo empiezan con el ticket en la copia con harness.
 
 ## Prompt 1
 
@@ -148,20 +144,54 @@ mientras tanto dame una archivo con los prompts listados que te di durante todo 
 
 ## Prompt 13
 
-**Modelo:** — (PENDIENTE: no consta; pon el que usaste)
+**Modelo:** Opus 5 (1M context)
 **Herramienta:** Claude Code, en la copia sin harness (`flowsync-sin-harness/`)
 
-<!--
-PENDIENTE: copiado literal de docs/harness/prompt-sin-harness.md. No hay transcripción de Claude
-Code para flowsync-sin-harness/ en esta máquina, así que no consta que se lanzara ni cuándo.
-Si lo lanzaste: sustituye la línea <pega aquí ...> por el ticket exactamente como lo pegaste,
-pon el modelo y muévelo a su posición real en el orden. Si no lo lanzaste, borra este apartado.
--->
+```
+cd ~/flowsync-sin-harness && claude
+```
+
+**Qué salió:** fue un pegado por error del comando de arranque. Claude respondió que la sesión ya estaba abierta en esa carpeta.
+
+## Prompt 14
+
+**Modelo:** Opus 5 (1M context)
+**Herramienta:** Claude Code, en la copia sin harness (`flowsync-sin-harness/`)
 
 ```
+[PENDIENTE DE LANZAR]
 Este es el ticket de Jira que tengo que implementar:
 
-<pega aquí la clave, el título y el texto completo del ticket "Implementar login en el frontend">
+FLOW-10 · Implementar login en el frontend
+Como usuario registrado quiero iniciar sesión desde la web para acceder a mi cuenta.
+
+Contexto
+- La API ya expone POST /api/v1/auth/login (backend/start/routes.ts). Recibe { email, password }
+  y devuelve { user, token }. El user trae id, fullName, email, createdAt, updatedAt, initials.
+- GET /api/v1/account/profile devuelve el usuario autenticado con header Authorization: Bearer <token>.
+- El frontend es el scaffold de Vite sin router, sin cliente HTTP ni gestor de estado.
+
+Criterios de aceptación
+1. Formulario de login con campos email y password y botón "Entrar".
+2. Validación en cliente alineada con backend/app/validators/user.ts: email con formato válido y
+   máximo 254 caracteres; password obligatorio.
+3. Al enviar, llama a POST /api/v1/auth/login. Si responde 200, guarda el token y muestra
+   "Hola, {fullName}" (o el email si fullName es null) con un botón "Salir".
+4. Si responde 400/422 muestra el mensaje de error de la API debajo del formulario; si hay
+   error de red, muestra "No se pudo conectar con el servidor".
+5. Mientras la petición está en curso, el botón se deshabilita.
+6. Al recargar la página con un token guardado, se llama a GET /api/v1/account/profile y se
+   mantiene la sesión; si responde 401, se limpia el token y vuelve al formulario.
+7. "Salir" llama a POST /api/v1/account/logout y limpia el token.
+
+Fuera de alcance
+- Registro de usuario, recuperación de contraseña, rutas protegidas, estilos más allá de lo mínimo.
+- Cualquier cambio en backend/.
+
+Notas técnicas
+- La URL base de la API debe salir de import.meta.env.VITE_API_URL con fallback a http://localhost:3333.
+- No añadir dependencias sin justificarlo en el plan.
+- Debe pasar npm run build y npm run lint en frontend/.
 
 Produce SOLO un plan de implementación, no escribas código ni crees archivos.
 El plan debe tener: contexto verificado (endpoints reales con archivo:línea y reglas de validación
@@ -169,3 +199,16 @@ que aplican), tabla de archivos a tocar contados, archivos que NO se tocan y por
 implementación, convenciones del proyecto que aplican, comandos de verificación, y supuestos.
 Termina con la línea: Plan listo. ¿Lo aplico?
 ```
+
+**Qué salió:** plan completo a la primera (5 archivos) y detectó el envoltorio `{ data }`. Afirmó por error que el cliente tiene que mandar `Accept: application/json`, cuando el backend ya lo fuerza con un middleware.
+
+## Prompt 15
+
+**Modelo:** Opus 5 (1M context)
+**Herramienta:** Claude Code, en la copia sin harness (`flowsync-sin-harness/`)
+
+```
+uarda el plan en ~/plan-sin-harness.md. Luego lanza también /priority-ticket FLOW-10 en la copia con harness si todavía no lo hiciste. Con los dos planes, rellena la columna, quita los PENDIENTE
+```
+
+**Qué salió:** guardó el plan. No volvió a lanzar `/priority-ticket`, porque ya se había lanzado (Prompt 1). Rellenó la columna «Sin harness» contrastándola con el plan con harness.
