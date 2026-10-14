@@ -1,4 +1,12 @@
-import type { AuthResult, LoginPayload, SignupPayload, User } from '@/lib/types'
+import type {
+  AuthResult,
+  CreateTaskPayload,
+  LoginPayload,
+  SignupPayload,
+  Task,
+  UpdateTaskPayload,
+  User,
+} from '@/lib/types'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3333'
 
@@ -35,13 +43,20 @@ const FIELD_LABELS: Record<string, string> = {
   email: 'el email',
   password: 'la contraseña',
   passwordConfirmation: 'la confirmación de la contraseña',
+  title: 'el título',
+  dueDate: 'la fecha de vencimiento',
 }
 
 const label = (field?: string) => FIELD_LABELS[field ?? ''] ?? 'el campo'
 
+/** Para las frases que empiezan por la etiqueta del campo. */
+const capitalize = (text: string) =>
+  text.charAt(0).toUpperCase() + text.slice(1)
+
 /**
  * Traduce un error de VineJS a una frase que el usuario pueda entender.
- * Cubre todas las reglas que usa `app/validators/user.ts` en el backend.
+ * Cubre todas las reglas que usan `app/validators/user.ts` y
+ * `app/validators/task.ts` en el backend.
  */
 function translate(error: BackendError): string {
   const { rule, field, meta } = error
@@ -58,9 +73,20 @@ function translate(error: BackendError): string {
     case 'required':
       return `Falta rellenar ${label(field)}.`
     case 'minLength':
-      return `${label(field)} debe tener al menos ${meta?.min} caracteres.`
+      return capitalize(
+        `${label(field)} debe tener al menos ${meta?.min} caracteres.`,
+      )
     case 'maxLength':
-      return `${label(field)} no puede superar los ${meta?.max} caracteres.`
+      return capitalize(
+        `${label(field)} no puede superar los ${meta?.max} caracteres.`,
+      )
+    case 'enum':
+      return 'Ese estado no existe.'
+    case 'database.exists':
+      return 'Esa persona no existe.'
+    case 'date':
+    case 'date.format':
+      return 'Introduce una fecha completa y válida.'
     default:
       return `Revisa ${label(field)}.`
   }
@@ -101,8 +127,19 @@ function toApiError(status: number, body: unknown): ApiError {
   )
 }
 
+/**
+ * El día de calendario local (`YYYY-MM-DD`). Con él el backend decide si una
+ * tarea está vencida según el día de quien mira. No vale `toISOString()`: daría
+ * el día UTC, que cerca de medianoche no es el de la persona.
+ */
+function localDay(): string {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
 type RequestOptions = {
-  method?: 'GET' | 'POST'
+  method?: 'GET' | 'POST' | 'PATCH'
   body?: unknown
   token?: string | null
 }
@@ -111,7 +148,11 @@ async function request<T>(
   path: string,
   { method = 'GET', body, token }: RequestOptions = {},
 ): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    // Va en todas las peticiones para que ninguna de tareas pueda olvidarlo.
+    'X-Client-Date': localDay(),
+  }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (token) headers.Authorization = `Bearer ${token}`
 
@@ -163,4 +204,39 @@ export function logout(token: string): Promise<void> {
   return request('/api/v1/account/logout', { method: 'POST', token }).then(
     () => undefined,
   )
+}
+
+export function listTasks(token: string): Promise<Task[]> {
+  return request<{ data: Task[] }>('/api/v1/tasks', { token }).then(
+    (response) => response.data,
+  )
+}
+
+export function getTask(token: string, id: number): Promise<Task> {
+  return request<{ data: Task }>(`/api/v1/tasks/${id}`, { token }).then(
+    (response) => response.data,
+  )
+}
+
+export function createTask(
+  token: string,
+  payload: CreateTaskPayload,
+): Promise<Task> {
+  return request<{ data: Task }>('/api/v1/tasks', {
+    method: 'POST',
+    body: payload,
+    token,
+  }).then((response) => response.data)
+}
+
+export function updateTask(
+  token: string,
+  id: number,
+  payload: UpdateTaskPayload,
+): Promise<Task> {
+  return request<{ data: Task }>(`/api/v1/tasks/${id}`, {
+    method: 'PATCH',
+    body: payload,
+    token,
+  }).then((response) => response.data)
 }
