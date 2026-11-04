@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { AlertCircleIcon, Loader2Icon } from 'lucide-react'
 import * as api from '@/lib/api'
 import { ApiError } from '@/lib/api'
-import type { Task, TaskStatus } from '@/lib/types'
+import type { Task, TaskStatus, UpdateTaskPayload } from '@/lib/types'
 import { useAuth } from '@/auth/use-auth'
 import { useAuthForm } from '@/auth/use-auth-form'
 import { FieldError } from '@/components/field-error'
@@ -64,8 +64,10 @@ function StatusSelect({
 
 type TaskPanelProps = {
   task: Task
-  token: string
-  onTaskUpdated: (task: Task) => void
+  /** Hay un cambio de esta tarea esperando respuesta del servidor. */
+  isPending: boolean
+  onOpen: (id: number) => Promise<void>
+  onUpdate: (task: Task, payload: UpdateTaskPayload) => Promise<void>
   onStatusChange: (task: Task, status: TaskStatus) => void
   onActionError: (message: string) => void
 }
@@ -76,13 +78,13 @@ type TaskPanelProps = {
  */
 function TaskPanel({
   task,
-  token,
-  onTaskUpdated,
+  isPending,
+  onOpen,
+  onUpdate,
   onStatusChange,
   onActionError,
 }: TaskPanelProps) {
   const dateInput = useRef<HTMLInputElement>(null)
-  const [isSaving, setSaving] = useState(false)
   const [dateError, setDateError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const panelId = `task-panel-${task.id}`
@@ -91,41 +93,35 @@ function TaskPanel({
   // Abrir la tarea la vuelve a leer: el panel enseña su estado actual, no el
   // que tenía cuando se cargó la lista.
   useEffect(() => {
-    let cancelled = false
-
-    api
-      .getTask(token, task.id)
-      .then((fresh) => {
-        if (!cancelled) onTaskUpdated(fresh)
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return
-        if (isSessionError(error)) onActionError(toMessage(error, ''))
-        else setLoadError(toMessage(error, 'No se ha podido abrir la tarea.'))
-      })
-
-    return () => {
-      cancelled = true
-    }
-    // Solo al abrir: las actualizaciones posteriores ya llegan por `onTaskUpdated`.
+    onOpen(task.id).catch((error: unknown) => {
+      if (isSessionError(error)) onActionError(toMessage(error, ''))
+      else setLoadError(toMessage(error, 'No se ha podido abrir la tarea.'))
+    })
+    // Solo al abrir: las actualizaciones posteriores llegan por la propia tarea.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.id, token])
+  }, [task.id])
 
-  /** Devuelve el campo a la última fecha guardada. */
-  const restoreDateInput = () => {
-    if (dateInput.current) dateInput.current.value = task.dueDate ?? ''
-  }
+  // El campo no es controlado (un día a medio escribir no tiene valor), así que
+  // se alinea a mano con la fecha de la tarea cuando cambia desde fuera: al
+  // quitarla, al revertir un error o al llegar datos frescos. No se toca
+  // mientras la persona está escribiendo en él.
+  useEffect(() => {
+    const input = dateInput.current
+    if (input && document.activeElement !== input) {
+      input.value = task.dueDate ?? ''
+    }
+  }, [task.dueDate])
 
-  // Sin actualización optimista: ante un error hay que conservar la fecha
-  // anterior, y el veredicto de vencida solo lo puede dar la respuesta.
   const saveDueDate = async (dueDate: string | null) => {
-    setSaving(true)
+    const previous = task.dueDate
     setDateError(null)
 
     try {
-      onTaskUpdated(await api.updateTask(token, task.id, { dueDate }))
+      await onUpdate(task, { dueDate })
     } catch (error) {
-      restoreDateInput()
+      // La tarea ya ha vuelto a su fecha anterior; el campo, si tenía el foco,
+      // hay que devolverlo a mano.
+      if (dateInput.current) dateInput.current.value = previous ?? ''
       if (isSessionError(error)) {
         onActionError(toMessage(error, ''))
       } else if (error instanceof ApiError && error.status === 422) {
@@ -138,8 +134,6 @@ function TaskPanel({
           ),
         )
       }
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -149,7 +143,7 @@ function TaskPanel({
     // Un día a medio escribir no se envía: la fecha guardada sigue intacta.
     if (validity.badInput || !value) {
       setDateError(validity.badInput ? INVALID_DATE : null)
-      if (!validity.badInput) restoreDateInput()
+      if (!validity.badInput) event.target.value = task.dueDate ?? ''
       return
     }
 
@@ -170,7 +164,9 @@ function TaskPanel({
         </p>
       )}
 
-      {task.isOverdue && (
+      {/* Mientras un cambio espera respuesta, el veredicto de antes ya no vale y
+          el nuevo solo lo puede dar el servidor: la señal se retira hasta entonces. */}
+      {task.isOverdue && !isPending && (
         <p
           className="text-destructive flex items-center gap-1.5 text-sm font-medium"
           role="status"
@@ -189,8 +185,6 @@ function TaskPanel({
             type="date"
             className="w-auto"
             defaultValue={task.dueDate ?? ''}
-            key={task.dueDate ?? 'sin-fecha'}
-            disabled={isSaving}
             onChange={handleDateChange}
             onBlur={handleDateBlur}
             aria-invalid={Boolean(dateError)}
@@ -199,12 +193,12 @@ function TaskPanel({
           <Button
             type="button"
             variant="outline"
-            disabled={isSaving || !task.dueDate}
+            disabled={!task.dueDate}
             onClick={() => saveDueDate(null)}
           >
             Quitar fecha
           </Button>
-          {isSaving && (
+          {isPending && (
             <Loader2Icon
               className="text-muted-foreground size-4 animate-spin self-center"
               aria-label="Guardando…"
@@ -224,6 +218,12 @@ function TaskPanel({
   )
 }
 
+/** Lo que un cambio pinta en pantalla antes de que conteste el servidor. */
+const optimisticPatch = (payload: UpdateTaskPayload): Partial<Task> => ({
+  ...(payload.status !== undefined && { status: payload.status }),
+  ...(payload.dueDate !== undefined && { dueDate: payload.dueDate }),
+})
+
 export function TasksPage() {
   const { token } = useAuth()
   const { isSubmitting, formError, fieldErrors, submit, failWith } =
@@ -233,7 +233,39 @@ export function TasksPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [openTaskId, setOpenTaskId] = useState<number | null>(null)
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<number>>(new Set())
   const [title, setTitle] = useState('')
+  // Última versión de cada tarea que ha confirmado el servidor: es a la que se
+  // vuelve si un cambio falla, en vez de al valor optimista que hubiera antes.
+  const confirmed = useRef(new Map<number, Task>())
+  // Número del último cambio lanzado por tarea, el del cambio cuya respuesta
+  // está reflejada en `confirmed` y cuántos siguen en vuelo. Con ellos una
+  // respuesta atrasada no pisa lo que la persona ha hecho después, y cuando ya
+  // no queda nada en vuelo la pantalla muestra lo que de verdad hay guardado.
+  const latestChange = useRef(new Map<number, number>())
+  const confirmedChange = useRef(new Map<number, number>())
+  const inFlight = useRef(new Map<number, number>())
+
+  const replaceTask = (id: number, patch: Partial<Task>) =>
+    setTasks(
+      (current) =>
+        current?.map((task) =>
+          task.id === id ? { ...task, ...patch } : task,
+        ) ?? current,
+    )
+
+  const acceptFromServer = (task: Task) => {
+    confirmed.current.set(task.id, task)
+    replaceTask(task.id, task)
+  }
+
+  const setPending = (id: number, isPending: boolean) =>
+    setPendingIds((current) => {
+      const next = new Set(current)
+      if (isPending) next.add(id)
+      else next.delete(id)
+      return next
+    })
 
   useEffect(() => {
     if (!token) return
@@ -243,7 +275,9 @@ export function TasksPage() {
     api
       .listTasks(token)
       .then((list) => {
-        if (!cancelled) setTasks(list)
+        if (cancelled) return
+        for (const task of list) confirmed.current.set(task.id, task)
+        setTasks(list)
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -256,13 +290,62 @@ export function TasksPage() {
     }
   }, [token])
 
-  const replaceTask = (id: number, patch: Partial<Task>) =>
-    setTasks(
-      (current) =>
-        current?.map((task) =>
-          task.id === id ? { ...task, ...patch } : task,
-        ) ?? current,
-    )
+  /** Relee una tarea al abrirla, salvo que alguien la haya cambiado mientras. */
+  const refreshTask = async (id: number) => {
+    if (!token) return
+    const changeAtStart = latestChange.current.get(id) ?? 0
+    const fresh = await api.getTask(token, id)
+    const untouched =
+      (latestChange.current.get(id) ?? 0) === changeAtStart &&
+      !inFlight.current.get(id)
+    if (untouched) {
+      acceptFromServer(fresh)
+    }
+  }
+
+  /**
+   * Aplica un cambio de forma optimista y lo confirma con el servidor. Si falla,
+   * la tarea vuelve a lo último confirmado y el error se propaga para que quien
+   * llama explique el motivo.
+   */
+  const updateTask = async (task: Task, payload: UpdateTaskPayload) => {
+    if (!token) return
+
+    const id = task.id
+    const change = (latestChange.current.get(id) ?? 0) + 1
+    latestChange.current.set(id, change)
+    inFlight.current.set(id, (inFlight.current.get(id) ?? 0) + 1)
+    const isLatest = () => latestChange.current.get(id) === change
+    const showConfirmed = () => {
+      const last = confirmed.current.get(id)
+      if (last) replaceTask(id, last)
+    }
+
+    setActionError(null)
+    setPending(id, true)
+    replaceTask(id, optimisticPatch(payload))
+
+    try {
+      const updated = await api.updateTask(token, id, payload)
+      // El servidor aplica los cambios en orden: una respuesta más antigua que
+      // la ya confirmada describe un estado que ya no existe.
+      if (change > (confirmedChange.current.get(id) ?? 0)) {
+        confirmed.current.set(id, updated)
+        confirmedChange.current.set(id, change)
+      }
+      if (isLatest()) showConfirmed()
+    } catch (error) {
+      if (isLatest()) showConfirmed()
+      throw error
+    } finally {
+      const remaining = (inFlight.current.get(id) ?? 1) - 1
+      inFlight.current.set(id, remaining)
+      if (remaining === 0) {
+        showConfirmed()
+        setPending(id, false)
+      }
+    }
+  }
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
@@ -277,33 +360,21 @@ export function TasksPage() {
     return submit(async () => {
       if (!token) return
       const task = await api.createTask(token, { title })
+      confirmed.current.set(task.id, task)
       // La tarea nueva se pinta sin volver a pedir la lista entera.
       setTasks((current) => [...(current ?? []), task])
       setTitle('')
     })
   }
 
-  const handleStatusChange = async (task: Task, status: TaskStatus) => {
-    if (!token) return
-
-    const previous = task.status
-    setActionError(null)
-    // Optimista: el cambio se ve al instante y se deshace si el backend falla.
-    // La respuesta trae además el veredicto de vencida recalculado.
-    replaceTask(task.id, { status })
-
-    try {
-      const updated = await api.updateTask(token, task.id, { status })
-      replaceTask(task.id, updated)
-    } catch (error) {
-      replaceTask(task.id, { status: previous })
+  const handleStatusChange = (task: Task, status: TaskStatus) =>
+    updateTask(task, { status }).catch((error: unknown) =>
       setActionError(
         isSessionError(error)
           ? toMessage(error, '')
           : 'No se ha podido guardar el cambio de estado. Inténtalo de nuevo.',
-      )
-    }
-  }
+      ),
+    )
 
   const toggleTask = (id: number) =>
     setOpenTaskId((current) => (current === id ? null : id))
@@ -406,14 +477,13 @@ export function TasksPage() {
                       <StatusSelect task={task} onChange={handleStatusChange} />
                     </div>
 
-                    {isOpen && token && (
+                    {isOpen && (
                       <div className="mt-3">
                         <TaskPanel
                           task={task}
-                          token={token}
-                          onTaskUpdated={(fresh) =>
-                            replaceTask(fresh.id, fresh)
-                          }
+                          isPending={pendingIds.has(task.id)}
+                          onOpen={refreshTask}
+                          onUpdate={updateTask}
                           onStatusChange={handleStatusChange}
                           onActionError={setActionError}
                         />

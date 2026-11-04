@@ -105,6 +105,14 @@ function toApiError(status: number, body: unknown): ApiError {
     )
   }
 
+  // Hoy solo lo puede dar una tarea que ya no existe (abrirla o cambiarla).
+  if (status === 404) {
+    return new ApiError(
+      'Esta tarea ya no existe. Recarga la lista para ver la versión actual.',
+      status,
+    )
+  }
+
   // `User.verifyCredentials` lanza E_INVALID_CREDENTIALS con un 400 sin `field`.
   if (status === 400) {
     return new ApiError('El email o la contraseña no son correctos.', status)
