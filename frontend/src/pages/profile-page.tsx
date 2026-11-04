@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { useAuth } from '@/auth/use-auth'
 import { Button } from '@/components/ui/button'
 import {
@@ -57,7 +58,10 @@ export function ProfilePage() {
           </dl>
         </CardContent>
 
-        <CardFooter>
+        <CardFooter className="flex-col gap-2">
+          <Button asChild className="w-full">
+            <Link to="/tasks">Ver tareas</Link>
+          </Button>
           <Button
             variant="outline"
             className="w-full"
